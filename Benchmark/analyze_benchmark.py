@@ -1,18 +1,22 @@
+"""
+Module: analyze_benchmark.py
+Description: Parses application logs and hardware system power CSV files 
+             to compute inference time, energy consumption, and performance ratios.
+"""
+
 import os
 import glob
+import re
 import pandas as pd
 import numpy as np
-import re
 from datetime import datetime
 
-# --- CONFIGURATION ---
-ROOT_DIR = "." 
-BASELINE_POWER = 32.6 
-
-def parse_log_file(filepath):
+def parse_log_file(filepath: str):
+    """
+    Parses log files to extract inference start time, end time, and total duration.
+    """
     start_time = None
     end_time = None
-    
     pattern = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]")
     
     with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
@@ -22,38 +26,34 @@ def parse_log_file(filepath):
         if "Running inference on patches" in line and start_time is None:
             match = pattern.match(line)
             if match:
-                dt_str = match.group(1)
                 try:
-                    start_time = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S.%f")
+                    start_time = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S.%f")
                 except ValueError:
                     pass
                     
         elif "Normalizing" in line and end_time is None:
             match = pattern.match(line)
             if match:
-                dt_str = match.group(1)
                 try:
-                    end_time = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S.%f")
+                    end_time = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S.%f")
                 except ValueError:
                     pass
         
         if start_time and end_time:
             break
             
-    if not start_time or not end_time:
-        return None, None, None
-        
-    duration_sec = (end_time - start_time).total_seconds()
-    
+    duration_sec = (end_time - start_time).total_seconds() if (start_time and end_time) else None
     return start_time, end_time, duration_sec
 
-def main():
+def compute_energy_summary(root_dir: str = ".", baseline_power: float = 32.6) -> None:
+    """
+    Aggregates hardware logs and power CSVs to compute runtime, power, and energy summaries.
+    """
     results = []
-    
     print("Scanning directories for Hardware CSVs and logs...\n")
     
-    for hw_dir in os.listdir(ROOT_DIR):
-        hw_path = os.path.join(ROOT_DIR, hw_dir)
+    for hw_dir in os.listdir(root_dir):
+        hw_path = os.path.join(root_dir, hw_dir)
         if not os.path.isdir(hw_path):
             continue
             
@@ -65,17 +65,14 @@ def main():
         
         try:
             df = pd.read_csv(hw_csv_path, encoding='latin1', on_bad_lines='skip', low_memory=False)
-            
             power_col = next((col for col in df.columns if "Total System Power" in col), None)
             if not power_col:
                 continue
                 
             datetime_str = df['Date'].astype(str) + ' ' + df['Time'].astype(str)
             df['Datetime'] = pd.to_datetime(datetime_str, format='%d.%m.%Y %H:%M:%S.%f', errors='coerce')
-            
             df[power_col] = pd.to_numeric(df[power_col], errors='coerce')
             df = df.dropna(subset=['Datetime', power_col]).sort_values('Datetime')
-            
         except Exception as e:
             print(f"  -> Error loading {hw_csv_path}: {e}")
             continue
@@ -112,7 +109,6 @@ def main():
             if valid_inferences > 0:
                 avg_duration = np.mean(duration_samples)
                 std_duration = np.std(duration_samples, ddof=1) if len(duration_samples) > 1 else 0.0
-                
                 avg_power = np.mean(total_power_samples) if total_power_samples else 0.0
                 std_power = np.std(total_power_samples, ddof=1) if len(total_power_samples) > 1 else 0.0
                 
@@ -128,36 +124,23 @@ def main():
 
     if results:
         results_df = pd.DataFrame(results)
-        
-        # Sort values to match image layout
         results_df = results_df.sort_values(by=['Hardware', 'Model_Precision'], ascending=[True, False]).reset_index(drop=True)
 
-        # 1. Calculate Corrected Power
-        results_df['Corrected_Avg_System_Power (W)'] = results_df['Avg_System_Power (W)'] - BASELINE_POWER
-        
-        # 2. Calculate Energy
+        results_df['Corrected_Avg_System_Power (W)'] = results_df['Avg_System_Power (W)'] - baseline_power
         results_df['Energy (J)'] = results_df['Corrected_Avg_System_Power (W)'] * results_df['Avg_Inference_Time (sec)']
-        
-        # 3. Propagate Uncertainty for Energy
         results_df['Energy_Uncertainty (J)'] = np.sqrt(
             (results_df['Avg_Inference_Time (sec)'] * results_df['Power_StdDev (W)'])**2 + 
             (results_df['Corrected_Avg_System_Power (W)'] * results_df['Time_StdDev (sec)'])**2
         )
 
-        # 4. Find Global Maximums for Ratios
         max_power = results_df['Corrected_Avg_System_Power (W)'].max()
         max_energy = results_df['Energy (J)'].max()
         
-        # 5. Calculate Ratios and their uncertainties
         results_df['Ratio Vs Max (Power)'] = (max_power - results_df['Corrected_Avg_System_Power (W)']) / max_power
-        # Uncertainty in power ratio = StdDev(Power) / MaxPower
         results_df['Ratio Vs Max (Power) Uncertainty'] = results_df['Power_StdDev (W)'] / max_power
-        
         results_df['Ratio Vs Max (Energy)'] = (max_energy - results_df['Energy (J)']) / max_energy
-        # Uncertainty in energy ratio = Uncertainty(Energy) / MaxEnergy
         results_df['Ratio Vs Max (Energy) Uncertainty'] = results_df['Energy_Uncertainty (J)'] / max_energy
         
-        # 6. Reorder columns
         cols = [
             'Hardware', 'Model_Precision', 'Inferences_Run', 
             'Avg_Inference_Time (sec)', 'Time_StdDev (sec)', 
@@ -168,7 +151,6 @@ def main():
         ]
         results_df = results_df[cols]
 
-        # 7. Format Columns
         results_df['Avg_Inference_Time (sec)'] = results_df['Avg_Inference_Time (sec)'].map('{:.2f}'.format)
         results_df['Time_StdDev (sec)'] = results_df['Time_StdDev (sec)'].map('{:.2f}'.format)
         results_df['Avg_System_Power (W)'] = results_df['Avg_System_Power (W)'].map('{:.1f}'.format)
@@ -181,16 +163,16 @@ def main():
         results_df['Ratio Vs Max (Energy)'] = (results_df['Ratio Vs Max (Energy)'] * 100).map('{:.1f}%'.format)
         results_df['Ratio Vs Max (Energy) Uncertainty'] = (results_df['Ratio Vs Max (Energy) Uncertainty'] * 100).map('±{:.1f}%'.format)
 
-        # Output to console
         print(results_df.to_string(index=False))
-        print(f"\n{' ' * 20}Baseline Total System Power (W){' ' * 30}{BASELINE_POWER}\n")
+        print(f"\n{' ' * 20}Baseline Total System Power (W){' ' * 30}{baseline_power}\n")
         
-        # Save to CSV
         out_csv = "inference_power_summary.csv"
         results_df.to_csv(out_csv, index=False)
         print(f"Results successfully saved to '{out_csv}'")
     else:
         print("\nNo valid inference sequences mapped. Check your directory structure.")
+        
+    return None
 
 if __name__ == "__main__":
-    main()
+    compute_energy_summary(root_dir=".", baseline_power=32.6)

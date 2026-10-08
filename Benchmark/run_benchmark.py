@@ -1,54 +1,36 @@
-import subprocess
-from pathlib import Path
+"""
+Module: run_benchmark.py
+Description: Orchestrates batch inference runs of the StrokeSeg2 application 
+             on NIfTI files across different model variants and precisions.
+"""
+
+import os
 import time
 import shutil
+import subprocess
+from pathlib import Path
 
-def process_nifti_files(root_folder, model_name):
-    # 1. Define your executables and fixed arguments
-    exe_path = r"C:\Users\z0051vdu\source\repos\strokeseg2-app-build\Release\strokeseg2-app.exe"
-    output_dir = r"C:\d\out"
-    app_log_dir = Path(r"C:\Users\z0051vdu\AppData\Roaming\Empenn - INRIA\StrokeSeg2")
-    final_log_destination = f"C:\d\{model_name}_logs"
-    
-    # Clear output folder before processing
-    output_path = Path(output_dir)
-    print(f"Clearing output folder: {output_path}...")
-    if output_path.exists():
-        for item in output_path.iterdir():
+def clear_directory(target_path: Path) -> None:
+    """
+    Safely clears all contents of a given directory.
+    """
+    if target_path.exists():
+        for item in target_path.iterdir():
             try:
                 if item.is_dir():
                     shutil.rmtree(item)
                 else:
                     item.unlink()
             except Exception as e:
-                print(f"Warning: Could not delete {item}. It might be in use. ({e})")
+                print(f"Warning: Could not delete {item}. ({e})")
     else:
-        output_path.mkdir(parents=True, exist_ok=True)
-    print("Output folder cleared.\n")
+        target_path.mkdir(parents=True, exist_ok=True)
+    return None
 
-    print(f"Clearing old logs in: {app_log_dir}...")
-    if app_log_dir.exists():
-        for item in app_log_dir.iterdir():
-            try:
-                if item.is_dir():
-                    shutil.rmtree(item)
-                else:
-                    item.unlink()
-            except Exception as e:
-                print(f"Warning: Could not delete {item.name}. It might be in use. ({e})")
-    else:
-        app_log_dir.mkdir(parents=True, exist_ok=True)
-    print("Log folder cleared.\n")
-    
-    # 2. Verify the root folder exists
-    root_path = Path(root_folder)
-    if not root_path.exists() or not root_path.is_dir():
-        print(f"Error: The directory '{root_folder}' does not exist.")
-        return
-
-    # 3. Recursively find all .nii and .nii.gz files
-    # Remove all files ending with PREPROC.nii.gz recursively in the input folder
-    print(f"Removing files ending with 'PREPROC.nii.gz' in '{root_path}'...")
+def clean_preproc_files(root_path: Path) -> int:
+    """
+    Removes intermediate PREPROC.nii.gz files recursively from the input directory.
+    """
     removed_count = 0
     for f in root_path.rglob("*"):
         try:
@@ -57,72 +39,83 @@ def process_nifti_files(root_folder, model_name):
                 removed_count += 1
         except Exception as e:
             print(f"Warning: Could not delete {f}. ({e})")
-    print(f"Removed {removed_count} PREPROC.nii.gz file(s).")
+    return removed_count
 
-    print(f"Scanning '{root_path}' for NIfTI files...")
-    nifti_files = [f for f in root_path.rglob("*") if f.name.endswith(('.nii', '.nii.gz'))]
-
-    if not nifti_files:
-        print("No NIfTI files found in the specified directory.")
-        return
-
-    print(f"Found {len(nifti_files)} file(s). Starting processing...\n")
-    print("-" * 50)
+def process_nifti_files(root_folder: str, model_name: str, exe_path: str, output_dir: str, app_log_dir: str, final_log_destination: str) -> None:
+    """
+    Runs batch inference over all NIfTI files in the root folder using the specified model.
+    """
+    output_path = Path(output_dir)
+    log_path = Path(app_log_dir)
+    root_path = Path(root_folder)
     
-    # Wait for JoularCore to initialize before processing files
-    time.sleep(5) 
-    # 4. Iterate through each file and run the command
-    for nifti_file in nifti_files:
-        file_path_str = str(nifti_file.resolve())
-        print(f"Processing: {file_path_str}")
-        
-        # Build the command array
-        command = [
-            exe_path,
-            "--input", file_path_str,
-            "-o", output_dir,
-            "--model", model_name,
-            "--verbose",
-            "--skip-preproc"
-        ]
-        try:
-            subprocess.run(command, check=True)
-            print(f"SUCCESS: Finished processing {nifti_file.name}\n")
+    print(f"Clearing output folder: {output_path}...")
+    clear_directory(output_path)
+    
+    print(f"Clearing old logs in: {log_path}...")
+    clear_directory(log_path)
+    
+    if root_path.exists() and root_path.is_dir():
+        print(f"Removing preprocessed files in '{root_path}'...")
+        clean_preproc_files(root_path)
+
+        nifti_files = [f for f in root_path.rglob("*") if f.name.endswith(('.nii', '.nii.gz'))]
+
+        if nifti_files:
+            print(f"Found {len(nifti_files)} file(s). Starting processing for model: {model_name}...\n")
             print("-" * 50)
             
-        except subprocess.CalledProcessError as e:
-            print(f"FAILED: An error occurred while processing {nifti_file.name}.")
-            print(f"Error details: {e}\n")
-            print("-" * 50)
-        except FileNotFoundError:
-            print(f"CRITICAL ERROR: Could not find the executable at {exe_path}")
-            print("Please check the path and try again.")
-            break # Stop the loop if the exe itself is missing
-    try:
-            # dirs_exist_ok=True ensures it won't crash if you run the same model name twice
-            shutil.copytree(app_log_dir, final_log_destination, dirs_exist_ok=True)
-            print(f"SUCCESS: Logs backed up to {final_log_destination}")
-    except Exception as e:
-            print(f"FAILED to backup logs: {e}")
-    # Remove any files ending with PREPROC.nii.gz in the input folder after processing
-    try:
-        removed_end_count = 0
-        for f in root_path.rglob("*"):
+            time.sleep(5) # Wait for hardware monitoring to stabilize
+            
+            for nifti_file in nifti_files:
+                file_path_str = str(nifti_file.resolve())
+                print(f"Processing: {file_path_str}")
+                
+                command = [
+                    exe_path,
+                    "--input", file_path_str,
+                    "-o", output_dir,
+                    "--model", model_name,
+                    "--verbose",
+                    "--skip-preproc"
+                ]
+                try:
+                    subprocess.run(command, check=True)
+                    print(f"SUCCESS: Finished processing {nifti_file.name}\n")
+                except subprocess.CalledProcessError as e:
+                    print(f"FAILED: An error occurred while processing {nifti_file.name}. ({e})\n")
+                except FileNotFoundError:
+                    print(f"CRITICAL ERROR: Could not find the executable at {exe_path}")
+                    break
+                print("-" * 50)
+                
             try:
-                if f.is_file() and f.name.endswith('PREPROC.nii.gz'):
-                    f.unlink()
-                    removed_end_count += 1
+                shutil.copytree(log_path, final_log_destination, dirs_exist_ok=True)
+                print(f"SUCCESS: Logs backed up to {final_log_destination}")
             except Exception as e:
-                print(f"Warning: Could not delete {f}. ({e})")
-        print(f"Removed {removed_end_count} PREPROC.nii.gz file(s) from input folder after processing.")
-    except Exception as e:
-        print(f"Failed to remove PREPROC.nii.gz files at end: {e}")
-    
+                print(f"FAILED to backup logs: {e}")
+                
+            clean_preproc_files(root_path)
+        else:
+            print("No NIfTI files found in the specified directory.")
+    else:
+        print(f"Error: The directory '{root_folder}' does not exist.")
+        
+    return None
+
 if __name__ == "__main__":
-    # Use a raw string (r"...") for Windows paths to prevent escape character errors
-    folder_to_scan = r"C:\d\Test_Set_ATLAS_2.1\images"
+    EXE_PATH = r"C:\Users\z0051vdu\source\repos\strokeseg2-app-build\Release\strokeseg2-app.exe"
+    OUTPUT_DIR = r"C:\d\out"
+    APP_LOG_DIR = r"C:\Users\z0051vdu\AppData\Roaming\Empenn - INRIA\StrokeSeg2"
+    FOLDER_TO_SCAN = r"C:\d\Test_Set_ATLAS_2.1\images"
     
-    process_nifti_files(folder_to_scan, "Teacher_fp32")
-    process_nifti_files(folder_to_scan, "Nano_fp32")
-    process_nifti_files(folder_to_scan, "Teacher_fp16")
-    process_nifti_files(folder_to_scan, "Nano_fp16")
+    for model in ["Teacher_fp32", "Nano_fp32", "Teacher_fp16", "Nano_fp16"]:
+        final_dest = f"C:\\d\\{model}_logs"
+        process_nifti_files(
+            root_folder=FOLDER_TO_SCAN,
+            model_name=model,
+            exe_path=EXE_PATH,
+            output_dir=OUTPUT_DIR,
+            app_log_dir=APP_LOG_DIR,
+            final_log_destination=final_dest
+        )
