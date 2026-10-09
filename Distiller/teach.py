@@ -5,6 +5,7 @@ Description: Custom nnU-Net trainer implementing Knowledge Distillation.
 """
 
 import os
+import argparse
 import torch
 import torch.nn.functional as F
 
@@ -15,7 +16,7 @@ from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
 from nnunetv2.utilities.helpers import dummy_context
 from batchgenerators.utilities.file_and_folder_operations import load_json, join
 
-from models import (
+from Distiller.models import (
     get_large_student, get_medium_student, get_small_student, 
     get_light_student, get_extra_light_student, get_extra_extralight_student, 
     get_nano_student, get_pico_student, get_femto_student
@@ -63,6 +64,7 @@ class nnUNetTrainer_KD_Base(nnUNetTrainer):
             
         self.teacher_network.eval()
         self.print_to_log_file("Teacher Model loaded and frozen.")
+        
         return None
 
     def kd_loss_fn(self, student_logits: torch.Tensor, teacher_logits: torch.Tensor) -> torch.Tensor:
@@ -79,6 +81,7 @@ class nnUNetTrainer_KD_Base(nnUNetTrainer):
         soft_loss_mean = soft_loss.sum(dim=1).mean()
         
         final_loss = soft_loss_mean * (self.temperature ** 2)
+        
         return final_loss
 
     def train_step(self, batch: dict) -> dict:
@@ -123,6 +126,7 @@ class nnUNetTrainer_KD_Base(nnUNetTrainer):
             self.optimizer.step()
 
         return_dict = {'loss': total_loss.detach().cpu().numpy()}
+        
         return return_dict
 
 class nnUNetTrainer_KD_Large(nnUNetTrainer_KD_Base):
@@ -195,16 +199,34 @@ def run_custom_kd_training(dataset_id: int, configuration: str, fold: int) -> No
         trainer.print_to_log_file("No checkpoint found. Starting training from scratch.")
         
     trainer.run_training()
+    
+    return None
+
+def main() -> None:
+    """
+    Main entry point for starting the KD training.
+    """
+    parser = argparse.ArgumentParser(description="Train a Knowledge Distillation student model.")
+    parser.add_argument("--dataset-id", type=int, default=999, help="The nnU-Net dataset identifier.")
+    parser.add_argument("--configuration", type=str, default="3d_fullres", help="nnU-Net configuration.")
+    parser.add_argument("--fold", type=int, default=2, help="Fold number to train.")
+    parser.add_argument("--nnunet-raw", type=str, required=True, help="Path for nnUNet_raw.")
+    parser.add_argument("--nnunet-preprocessed", type=str, required=True, help="Path for nnUNet_preprocessed.")
+    parser.add_argument("--nnunet-results", type=str, required=True, help="Path for nnUNet_results.")
+    
+    args = parser.parse_args()
+    
+    os.environ['nnUNet_raw'] = args.nnunet_raw
+    os.environ['nnUNet_preprocessed'] = args.nnunet_preprocessed
+    os.environ['nnUNet_results'] = args.nnunet_results
+    
+    run_custom_kd_training(
+        dataset_id=args.dataset_id, 
+        configuration=args.configuration, 
+        fold=args.fold
+    )
+    
     return None
 
 if __name__ == '__main__':
-    # Localizing environment variables
-    os.environ['nnUNet_raw'] = "/path/to/nnUNet_raw"
-    os.environ['nnUNet_preprocessed'] = "/path/to/nnUNet_preprocessed"
-    os.environ['nnUNet_results'] = "/path/to/nnUNet_results"
-    
-    run_custom_kd_training(
-        dataset_id=999, 
-        configuration='3d_fullres', 
-        fold=2
-    )
+    main()

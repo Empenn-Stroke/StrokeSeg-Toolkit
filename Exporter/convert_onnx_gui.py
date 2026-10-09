@@ -287,7 +287,10 @@ class UnifiedONNXExporterApp:
             
         return None
 
-if __name__ == "__main__":
+def main():
     root = tk.Tk()
     app = UnifiedONNXExporterApp(root)
     root.mainloop()
+
+if __name__ == "__main__":
+    main()

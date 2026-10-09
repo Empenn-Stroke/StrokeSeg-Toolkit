@@ -7,6 +7,7 @@ Description: Orchestrates batch inference runs of the StrokeSeg2 application
 import os
 import time
 import shutil
+import argparse
 import subprocess
 from pathlib import Path
 
@@ -65,36 +66,41 @@ def process_nifti_files(root_folder: str, model_name: str, exe_path: str, output
             print(f"Found {len(nifti_files)} file(s). Starting processing for model: {model_name}...\n")
             print("-" * 50)
             
-            time.sleep(5) # Wait for hardware monitoring to stabilize
+            time.sleep(5) 
+            
+            executable_found = True
             
             for nifti_file in nifti_files:
-                file_path_str = str(nifti_file.resolve())
-                print(f"Processing: {file_path_str}")
+                if executable_found:
+                    file_path_str = str(nifti_file.resolve())
+                    print(f"Processing: {file_path_str}")
+                    
+                    command = [
+                        exe_path,
+                        "--input", file_path_str,
+                        "-o", output_dir,
+                        "--model", model_name,
+                        "--verbose",
+                        "--skip-preproc"
+                    ]
+                    try:
+                        subprocess.run(command, check=True)
+                        print(f"SUCCESS: Finished processing {nifti_file.name}\n")
+                    except subprocess.CalledProcessError as e:
+                        print(f"FAILED: An error occurred while processing {nifti_file.name}. ({e})\n")
+                    except FileNotFoundError:
+                        print(f"CRITICAL ERROR: Could not find the executable at {exe_path}")
+                        executable_found = False
+                        
+                    print("-" * 50)
                 
-                command = [
-                    exe_path,
-                    "--input", file_path_str,
-                    "-o", output_dir,
-                    "--model", model_name,
-                    "--verbose",
-                    "--skip-preproc"
-                ]
+            if executable_found:
                 try:
-                    subprocess.run(command, check=True)
-                    print(f"SUCCESS: Finished processing {nifti_file.name}\n")
-                except subprocess.CalledProcessError as e:
-                    print(f"FAILED: An error occurred while processing {nifti_file.name}. ({e})\n")
-                except FileNotFoundError:
-                    print(f"CRITICAL ERROR: Could not find the executable at {exe_path}")
-                    break
-                print("-" * 50)
-                
-            try:
-                shutil.copytree(log_path, final_log_destination, dirs_exist_ok=True)
-                print(f"SUCCESS: Logs backed up to {final_log_destination}")
-            except Exception as e:
-                print(f"FAILED to backup logs: {e}")
-                
+                    shutil.copytree(log_path, final_log_destination, dirs_exist_ok=True)
+                    print(f"SUCCESS: Logs backed up to {final_log_destination}")
+                except Exception as e:
+                    print(f"FAILED to backup logs: {e}")
+                    
             clean_preproc_files(root_path)
         else:
             print("No NIfTI files found in the specified directory.")
@@ -103,19 +109,37 @@ def process_nifti_files(root_folder: str, model_name: str, exe_path: str, output
         
     return None
 
-if __name__ == "__main__":
-    EXE_PATH = r"C:\Users\z0051vdu\source\repos\strokeseg2-app-build\Release\strokeseg2-app.exe"
-    OUTPUT_DIR = r"C:\d\out"
-    APP_LOG_DIR = r"C:\Users\z0051vdu\AppData\Roaming\Empenn - INRIA\StrokeSeg2"
-    FOLDER_TO_SCAN = r"C:\d\Test_Set_ATLAS_2.1\images"
+def main() -> None:
+    """
+    Main entry point for running the benchmark script with command-line arguments.
+    """
+    parser = argparse.ArgumentParser(description="Run batch inference benchmark for StrokeSeg2.")
+    parser.add_argument("--exe-path", type=str, required=True, help="Absolute path to the StrokeSeg2 executable.")
+    parser.add_argument("--input-dir", type=str, required=True, help="Directory containing the input NIfTI files.")
+    parser.add_argument("--output-dir", type=str, default="out", help="Directory where inference outputs will be saved.")
+    parser.add_argument("--log-dest-dir", type=str, default="logs", help="Destination base directory for saving benchmark logs.")
+    parser.add_argument("--models", type=str, nargs='+', default=["Teacher_fp32", "Nano_fp32", "Teacher_fp16", "Nano_fp16"], help="List of model variants to benchmark.")
     
-    for model in ["Teacher_fp32", "Nano_fp32", "Teacher_fp16", "Nano_fp16"]:
-        final_dest = f"C:\\d\\{model}_logs"
+    args = parser.parse_args()
+    
+    appdata_path = os.environ.get("APPDATA", "")
+    if appdata_path:
+        app_log_dir = os.path.join(appdata_path, "Empenn - INRIA", "StrokeSeg2")
+    else:
+        app_log_dir = "app_logs" 
+        
+    for model in args.models:
+        final_dest = os.path.join(args.log_dest_dir, f"{model}_logs")
         process_nifti_files(
-            root_folder=FOLDER_TO_SCAN,
+            root_folder=args.input_dir,
             model_name=model,
-            exe_path=EXE_PATH,
-            output_dir=OUTPUT_DIR,
-            app_log_dir=APP_LOG_DIR,
+            exe_path=args.exe_path,
+            output_dir=args.output_dir,
+            app_log_dir=app_log_dir,
             final_log_destination=final_dest
         )
+        
+    return None
+
+if __name__ == "__main__":
+    main()

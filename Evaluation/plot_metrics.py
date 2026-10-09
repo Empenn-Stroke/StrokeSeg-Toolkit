@@ -6,6 +6,7 @@ Description: Generates statistical visualizations for model evaluation,
 """
 
 import os
+import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -124,6 +125,7 @@ def generate_paired_boxplots(teacher_csv: str, student_csv: str, output_path: st
                     ax.axis('off')
 
         plt.tight_layout(pad=4.0)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"-> Saved 4x4 paired boxplot grid to '{output_path}'")
@@ -133,103 +135,23 @@ def generate_paired_boxplots(teacher_csv: str, student_csv: str, output_path: st
         
     return None
 
-def plot_capacity_scaling(csv_files: list, output_path: str, plot_style: str = 'bands') -> None:
+def main() -> None:
     """
-    Generates a 2x2 grid showing metric trends across model sizes (parameter counts).
-    Supports either confidence 'bands' or error 'bars'.
+    Main entry point for generating evaluation plots using command-line arguments.
     """
-    param_dict = {
-        'Femto': 0.05 * 1e6, 'Pico': 0.21 * 1e6, 'Nano': 0.84 * 1e6,
-        'ExtraExtraLight': 2.61 * 1e6, 'ExtraLight': 4.72 * 1e6,
-        'Light': 10.44 * 1e6, 'Small': 16.39 * 1e6, 'Medium': 35.27 * 1e6,
-        'Large':  52.91 * 1e6, 'Teacher': 102.35 * 1e6
-    }
-
-    dfs = []
-    for file in csv_files:
-        if os.path.exists(file):
-            df = pd.read_csv(file)
-            raw_model_name = str(df['Model'].iloc[0]).strip()
-            
-            matched_key = next((k for k in param_dict.keys() if k.lower() == raw_model_name.lower()), None)
-            
-            if matched_key is not None:
-                df['Model'] = matched_key
-                df['Params_M'] = param_dict[matched_key]
-                
-                df_all = df.copy()
-                df_all['Size'] = 'All'
-                dfs.append(pd.concat([df, df_all], ignore_index=True))
-                
-    if len(dfs) > 0:
-        df_total = pd.concat(dfs, ignore_index=True)
-        metrics = ['Global_Dice', 'Lesion_Dice', 'Lesion_F1', 'Average_Surface_Distance_mm']
-        df_melted = df_total.melt(id_vars=['Subject', 'Model', 'Params_M', 'Size'], 
-                                  value_vars=metrics, var_name='Metric', value_name='Score')
-
-        fig, axes = plt.subplots(2, 2, figsize=(14, 12))
-        axes = axes.flatten()
-        titles = ['Global Dice Score', 'Lesion Dice Score', 'Lesion F1 Score', 'Average Surface Distance (mm)']
-        
-        size_palette = {'All': 'black', 'L': '#1f77b4', 'M': '#ff7f0e', 'S': '#2ca02c'}
-        marker_palette = {'All': 'o', 'L': 'X', 'M': 's', 'S': '^'} 
-        sizes_to_plot = ['All', 'L', 'M', 'S']
-
-        for i, metric in enumerate(metrics):
-            df_sub = df_melted[df_melted['Metric'] == metric]
-            df_sub_plot = df_sub[df_sub['Model'] != 'Teacher']
-            
-            for size in sizes_to_plot:
-                df_size = df_sub_plot[df_sub_plot['Size'] == size]
-                if not df_size.empty:
-                    errorbar_setting = None if size == 'All' else ('ci', 95)
-                    
-                    if plot_style == 'bands':
-                        sns.lineplot(
-                            data=df_size, x='Params_M', y='Score', color=size_palette[size],
-                            marker=marker_palette[size], linestyle='', err_style='band',                       
-                            errorbar=errorbar_setting, err_kws={'alpha': 0.2, 'zorder': 1},    
-                            markersize=10, alpha=0.6, label=size if i == 0 else None,         
-                            ax=axes[i], zorder=4                                
-                        )
-                    else: # bars
-                        sns.lineplot(
-                            data=df_size, x='Params_M', y='Score', color=size_palette[size],
-                            marker=marker_palette[size], linestyle='', err_style='bars',
-                            errorbar=errorbar_setting, err_kws={'linewidth': 3},
-                            markersize=14, alpha=0.6, label=size if i == 0 else None,
-                            ax=axes[i]
-                        )
-            
-            for size in sizes_to_plot:
-                teacher_mask = (df_sub['Model'] == 'Teacher') & (df_sub['Size'] == size)
-                if not df_sub[teacher_mask].empty:
-                    teacher_ref = df_sub[teacher_mask]['Score'].mean()
-                    axes[i].axhline(y=teacher_ref, color=size_palette[size], linestyle='--', 
-                                    linewidth=3, alpha=0.7, zorder=0)
-            
-            axes[i].set_title(titles[i], fontweight='bold', pad=15)
-            axes[i].set_xlabel("Number of Parameters")
-            axes[i].set_ylabel("Score" if i < 3 else "Distance (mm)")
-            axes[i].set_xscale('log')
-            axes[i].grid(True, which="both", ls="--", alpha=0.5)
-
-        handles, labels = axes[0].get_legend_handles_labels()
-        fig.legend(handles, labels, loc='lower center', ncol=4, bbox_to_anchor=(0.5, 0.98), title="Lesion category")
-        
-        if axes[0].get_legend() is not None:
-            axes[0].get_legend().remove()
-
-        plt.tight_layout(rect=[0, 0, 1, 0.98])
-        plt.savefig(output_path, format="pdf", bbox_inches='tight', dpi=1200)
-        print(f"PDF Plot saved successfully to '{output_path}'.")
-        
+    parser = argparse.ArgumentParser(description="Generate paired boxplots comparing Teacher and Student metrics.")
+    parser.add_argument("--teacher-csv", type=str, required=True, help="Path to the Teacher evaluation CSV file.")
+    parser.add_argument("--student-csv", type=str, required=True, help="Path to the Student evaluation CSV file.")
+    parser.add_argument("--output-path", type=str, default="evaluation_results/Teacher_vs_Student_Boxplots.png", help="Path to save the output plot image.")
+    
+    args = parser.parse_args()
+    
+    generate_paired_boxplots(
+        teacher_csv=args.teacher_csv,
+        student_csv=args.student_csv,
+        output_path=args.output_path
+    )
     return None
 
 if __name__ == "__main__":
-    # Example execution
-    generate_paired_boxplots(
-        teacher_csv="evaluation_results/Evaluation_Teacher.csv",
-        student_csv="evaluation_results/Evaluation_Nano.csv",
-        output_path="evaluation_results/Teacher_vs_Nano_Boxplots.png"
-    )
+    main()

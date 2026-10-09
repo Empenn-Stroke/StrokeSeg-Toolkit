@@ -7,6 +7,7 @@ Description: Aligns, binarizes, and formats the ATLAS dataset for nnU-Net
 import os
 import json
 import shutil
+import argparse
 import subprocess
 import numpy as np
 import nibabel as nib
@@ -17,11 +18,6 @@ def prepare_training_data(base_dir_path: str, dataset_id: int, nnunet_raw_path: 
     """
     Processes the raw ATLAS data by resampling masks to match T1 images, 
     binarizes them, and structures the output for nnU-Net.
-    
-    Args:
-        base_dir_path (str): The root path containing 'preprocessed' and 'derivatives' folders.
-        dataset_id (int): The nnU-Net dataset identifier (e.g., 999).
-        nnunet_raw_path (str): The root path for nnU-Net raw datasets.
     """
     base_dir = Path(base_dir_path)
     images_dir = base_dir / "preprocessed"
@@ -88,17 +84,30 @@ def prepare_training_data(base_dir_path: str, dataset_id: int, nnunet_raw_path: 
 
     return None
 
-if __name__ == "__main__":
-    # Localizing environment variables to the execution script
-    os.environ['nnUNet_raw'] = "/path/to/nnUNet_raw"
-    os.environ['nnUNet_preprocessed'] = "/path/to/nnUNet_preprocessed"
-    os.environ['nnUNet_results'] = "/path/to/nnUNet_results"
-
-    ATLAS_ROOT = "/home/ymahe/Desktop/Datasets/ATLAS_2"
-    DATASET_ID = 999
+def main() -> None:
+    """
+    Main entry point for preparing ATLAS data with command-line arguments.
+    """
+    parser = argparse.ArgumentParser(description="Prepare ATLAS dataset for nnU-Net.")
+    parser.add_argument("--base-dir", type=str, required=True, help="Root path containing 'preprocessed' and 'derivatives' folders.")
+    parser.add_argument("--dataset-id", type=int, default=999, help="The nnU-Net dataset identifier.")
+    parser.add_argument("--nnunet-raw", type=str, required=True, help="Path for nnUNet_raw.")
+    parser.add_argument("--nnunet-preprocessed", type=str, required=True, help="Path for nnUNet_preprocessed.")
+    parser.add_argument("--nnunet-results", type=str, required=True, help="Path for nnUNet_results.")
+    
+    args = parser.parse_args()
+    
+    os.environ['nnUNet_raw'] = args.nnunet_raw
+    os.environ['nnUNet_preprocessed'] = args.nnunet_preprocessed
+    os.environ['nnUNet_results'] = args.nnunet_results
     
     prepare_training_data(
-        base_dir_path=ATLAS_ROOT, 
-        dataset_id=DATASET_ID, 
-        nnunet_raw_path=os.environ.get('nnUNet_raw', '/tmp/nnUNet_raw')
+        base_dir_path=args.base_dir, 
+        dataset_id=args.dataset_id, 
+        nnunet_raw_path=args.nnunet_raw
     )
+    
+    return None
+
+if __name__ == "__main__":
+    main()

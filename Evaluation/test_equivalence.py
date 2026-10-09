@@ -6,13 +6,14 @@ Description: Performs Two One-Sided Tests (TOST) to determine statistical
 
 import os
 import datetime
+import argparse
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
 import SimpleITK as sitk
 from tqdm import tqdm
 
-from metrics import calculate_dice
+from Evaluation.metrics import calculate_dice
 
 def perform_tost(diffs: np.ndarray, margin: float, alpha: float = 0.05) -> dict:
     """
@@ -146,16 +147,29 @@ def run_equivalence_pipeline(models: list, gt_dir: str, preds_base_dir: str, out
         
     return None
 
-if __name__ == "__main__":
-    MODELS_TO_TEST = [
+def main() -> None:
+    """
+    Main entry point handling command-line arguments for TOST testing.
+    """
+    parser = argparse.ArgumentParser(description="Perform TOST equivalence testing between FP32 and FP16 outputs.")
+    parser.add_argument("--gt-dir", type=str, required=True, help="Directory containing Ground Truth masks.")
+    parser.add_argument("--preds-base-dir", type=str, default="preds", help="Base directory containing prediction model subfolders.")
+    parser.add_argument("--output-dir", type=str, default="evaluation_results", help="Directory where output CSVs will be saved.")
+    parser.add_argument("--models", type=str, nargs='+', default=[
         "Teacher", "Femto", "Pico", "Nano", 
         "ExtraExtraLight", "ExtraLight", "Light", 
         "Small", "Medium", "Large"
-    ]
+    ], help="List of model names to evaluate.")
+    
+    args = parser.parse_args()
     
     run_equivalence_pipeline(
-        models=MODELS_TO_TEST,
-        gt_dir="Test_Set_ATLAS_2.1/masks",
-        preds_base_dir="preds",
-        output_dir="evaluation_results"
+        models=args.models,
+        gt_dir=args.gt_dir,
+        preds_base_dir=args.preds_base_dir,
+        output_dir=args.output_dir
     )
+    return None
+
+if __name__ == "__main__":
+    main()

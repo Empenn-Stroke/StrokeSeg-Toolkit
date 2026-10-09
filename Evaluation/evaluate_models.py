@@ -6,12 +6,13 @@ Description: Evaluates model predictions against Ground Truth using standard
 
 import os
 import datetime
+import argparse
 import pandas as pd
 import SimpleITK as sitk
 import numpy as np
 from tqdm import tqdm
 
-from metrics import (
+from Evaluation.metrics import (
     calculate_dice, 
     calculate_asd, 
     calculate_lesion_f1, 
@@ -108,15 +109,25 @@ def run_evaluation_pipeline(pred_dir: str, gt_dir: str, output_dir: str, model_n
     
     return None
 
-if __name__ == "__main__":
-    # Example execution configuration
-    TEST_GT_DIR = "Test_Set_ATLAS_2.1/masks"
-    OUTPUT_CSV_DIR = "evaluation_results"
+def main() -> None:
+    """
+    Main entry point handling command-line arguments.
+    """
+    parser = argparse.ArgumentParser(description="Evaluate segmentation predictions against Ground Truth.")
+    parser.add_argument("--pred-dir", type=str, required=True, help="Directory containing prediction NIfTI files.")
+    parser.add_argument("--gt-dir", type=str, required=True, help="Directory containing Ground Truth NIfTI masks.")
+    parser.add_argument("--output-dir", type=str, default="evaluation_results", help="Directory where output CSVs will be stored.")
+    parser.add_argument("--model-name", type=str, default="Teacher", help="Name of the model being evaluated.")
     
-    # In a real workflow, this would iterate over arguments or a config file
+    args = parser.parse_args()
+    
     run_evaluation_pipeline(
-        pred_dir="preds/teacher", 
-        gt_dir=TEST_GT_DIR, 
-        output_dir=OUTPUT_CSV_DIR, 
-        model_name="Teacher"
+        pred_dir=args.pred_dir, 
+        gt_dir=args.gt_dir, 
+        output_dir=args.output_dir, 
+        model_name=args.model_name
     )
+    return None
+
+if __name__ == "__main__":
+    main()
